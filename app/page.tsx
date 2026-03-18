@@ -1,61 +1,110 @@
 'use client';
 
-import { useState } from 'react';
-import { Search, MapPin, PoundSterling, Bed, Bath, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, MapPin, PoundSterling, Bed, Bath, CheckCircle, XCircle, MessageSquare, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 
-// Sample static房源数据
-const sampleListings = [
-  {
-    id: 1,
-    title: 'Modern En-suite Near LSE, Covent Garden',
-    location: 'Covent Garden, London WC2',
-    price: 295,
-    priceUnit: 'pw',
-    beds: 1,
-    baths: 1,
-    imageUrl: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=800&q=60',
-    description: 'Modern en-suite room in a 4-bed apartment. 5 minutes walk to LSE. All bills included. Available from September 2026.',
-    aiSummary: '🚇 位置极佳，步行到LSE仅5分钟\n💰 每周295镑，包所有bill\n⚠️ 无明显风险点，推荐考虑',
-    includesBills: true,
-    studentFriendly: true,
-  },
-  {
-    id: 2,
-    title: '2 Bed Flat near UCL, Bloomsbury',
-    location: 'Bloomsbury, London WC1',
-    price: 450,
-    priceUnit: 'pw',
-    beds: 2,
-    baths: 1,
-    imageUrl: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=800&q=60',
-    description: 'Spacious 2 bedroom flat close to UCL. Perfect for two students. EPC rating C. No agency fees.',
-    aiSummary: '🏠 空间大适合合租\n🚶 10分钟到UCL主校区\n💸 无中介费，非常划算',
-    includesBills: false,
-    studentFriendly: true,
-  },
-  {
-    id: 3,
-    title: 'Studio Flat in Zone 2, Manchester',
-    location: 'Oxford Road, Manchester M14',
-    price: 180,
-    priceUnit: 'pw',
-    beds: 1,
-    baths: 1,
-    imageUrl: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=60',
-    description: 'Ground floor studio, close to University of Manchester. Requires UK guarantor. Bills not included.',
-    aiSummary: '🎓 曼大步行10分钟\n⚠️ 需要英国担保人，新生请注意\n💷 价格非常友好',
-    includesBills: false,
-    studentFriendly: true,
-  },
-];
+// API base URL - configure this for your environment
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+
+type Listing = {
+  id?: number;
+  title: string;
+  location: string;
+  price: number;
+  priceUnit: string;
+  beds: number;
+  baths: number;
+  image_url: string;
+  description?: string;
+  ai_summary?: string;
+  includes_bills?: boolean;
+  student_friendly?: boolean;
+  source_url: string;
+  source: string;
+};
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [minPrice, setMinPrice] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+  const [selectedBeds, setSelectedBeds] = useState<number[]>([]);
+  const [filterIncludesBills, setFilterIncludesBills] = useState(false);
+  const [filterStudentOnly, setFilterStudentOnly] = useState(false);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load existing listings on mount
+  useEffect(() => {
+    loadListings();
+  }, []);
+
+  const loadListings = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/listings`);
+      const data = await res.json();
+      if (data.data) {
+        setListings(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load listings:', err);
+    }
+  };
+
+  const handleSearch = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Search Rightmove first (you can switch to zoopla)
+      const res = await fetch(`${API_BASE_URL}/api/crawl`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'rightmove',
+          query: searchQuery,
+          minPrice: minPrice ? parseInt(minPrice) : undefined,
+          maxPrice: maxPrice ? parseInt(maxPrice) : undefined,
+          beds: selectedBeds.length > 0 ? selectedBeds[0] : undefined,
+        }),
+      });
+      
+      const data = await res.json();
+      if (data.error) {
+        setError(data.message);
+      } else {
+        // Refresh listings after crawl
+        await loadListings();
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleBed = (bed: number) => {
+    if (selectedBeds.includes(bed)) {
+      setSelectedBeds(selectedBeds.filter(b => b !== bed));
+    } else {
+      setSelectedBeds([bed]); // Only allow one selection for simplicity
+    }
+  };
+
+  // Apply filters to listings
+  const filteredListings = listings.filter(listing => {
+    if (minPrice && listing.price < parseInt(minPrice)) return false;
+    if (maxPrice && listing.price > parseInt(maxPrice)) return false;
+    if (selectedBeds.length > 0 && !selectedBeds.includes(listing.beds)) return false;
+    if (filterIncludesBills && !listing.includes_bills) return false;
+    if (filterStudentOnly && !listing.student_friendly) return false;
+    return true;
+  });
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">

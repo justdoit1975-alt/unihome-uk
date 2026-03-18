@@ -215,8 +215,80 @@ app.get('/api/listings', async (req, res) => {
   res.json({ data });
 });
 
+// Crawl endpoints
+const RightmoveCrawler = require('./crawler/rightmove');
+const ZooplaCrawler = require('./crawler/zoopla');
+const rightmove = new RightmoveCrawler();
+const zoopla = new ZooplaCrawler();
+
+// Trigger crawl
+app.post('/api/crawl', async (req, res) => {
+  try {
+    const { source, query, minPrice, maxPrice, beds } = req.body;
+    const params = { query, minPrice, maxPrice, beds };
+    
+    let results;
+    if (source === 'zoopla') {
+      results = await zoopla.search(params);
+    } else {
+      results = await rightmove.search(params);
+    }
+    
+    // Get full details for each result and save to DB
+    const saved = [];
+    for (const item of results) {
+      try {
+        let detail;
+        if (source === 'zoopla') {
+          detail = await zoopla.getListingDetail(item.url);
+        } else {
+          detail = await rightmove.getListingDetail(item.url);
+        }
+        
+        // Save to Supabase
+        const { data, error } = await supabase.from('listings').upsert({
+          title: detail.title,
+          location: detail.address || detail.title,
+          price: detail.price,
+          price_unit: detail.priceUnit,
+          description: detail.description,
+          beds: detail.beds,
+          baths: detail.baths,
+          includes_bills: detail.includesBills,
+          student_friendly: detail.studentFriendly,
+          image_url: detail.imageUrl,
+          image_urls: detail.imageUrls,
+          source_url: detail.url,
+          source: detail.source || source,
+          crawled_at: detail.crawledAt,
+        }, { onConflict: 'source_url' });
+        
+        if (error) {
+          console.error('Save error:', error);
+        } else {
+          saved.push(detail);
+        }
+      } catch (err) {
+        console.error('Failed to process listing:', item.url, err);
+      }
+    }
+    
+    res.json({
+      source,
+      found: results.length,
+      saved: saved.length,
+      results: saved,
+    });
+    
+  } catch (err) {
+    console.error('Crawl error:', err);
+    res.status(500).json({ error: 'Crawl failed', message: err.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 UniHome Backend running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🕷 Crawl endpoint: POST http://localhost:${PORT}/api/crawl`);
 });
