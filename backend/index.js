@@ -218,8 +218,10 @@ app.get('/api/listings', async (req, res) => {
 // Crawl endpoints
 const RightmoveCrawler = require('./crawler/rightmove');
 const ZooplaCrawler = require('./crawler/zoopla');
+const DoubaoAI = require('./ai/doubao');
 const rightmove = new RightmoveCrawler();
 const zoopla = new ZooplaCrawler();
+const ai = new DoubaoAI(config.doubao.apiKey);
 
 // Trigger crawl
 app.post('/api/crawl', async (req, res) => {
@@ -246,6 +248,13 @@ app.post('/api/crawl', async (req, res) => {
         }
         
         // Save to Supabase
+        let aiSummary = null;
+        try {
+          aiSummary = await ai.analyzeListing(detail);
+        } catch (aiErr) {
+          console.error('AI analysis failed:', aiErr);
+        }
+        
         const { data, error } = await supabase.from('listings').upsert({
           title: detail.title,
           location: detail.address || detail.title,
@@ -260,13 +269,15 @@ app.post('/api/crawl', async (req, res) => {
           image_urls: detail.imageUrls,
           source_url: detail.url,
           source: detail.source || source,
+          ai_summary: aiSummary,
           crawled_at: detail.crawledAt,
         }, { onConflict: 'source_url' });
         
         if (error) {
           console.error('Save error:', error);
         } else {
-          saved.push(detail);
+          // Add AI summary to saved result
+          saved.push({...detail, ai_summary: aiSummary});
         }
       } catch (err) {
         console.error('Failed to process listing:', item.url, err);
